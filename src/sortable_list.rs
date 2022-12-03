@@ -1,7 +1,7 @@
 use web_sys::HtmlElement;
 use yew::prelude::*;
 
-use crate::{Direction, DragArea, Draggable, Droppable, Spacer, Style};
+use crate::{Direction, DragArea, DragPosition, Draggable, Droppable, Spacer, Style};
 
 #[derive(Properties, PartialEq)]
 pub struct SortableListProps {
@@ -16,10 +16,12 @@ pub struct SortableListProps {
 
 #[function_component]
 pub fn SortableList(props: &SortableListProps) -> Html {
-    let node_refs = use_mut_ref(Vec::<NodeRef>::new);
     let order = use_mut_ref(Vec::<usize>::new);
+    let node_refs = use_mut_ref(Vec::<NodeRef>::new);
     let drag_index = use_state_eq(Option::<usize>::default);
-    let is_smooth = use_state_eq(|| false);
+    let hover_index = use_state_eq(Option::<usize>::default);
+    let hover_space = use_state_eq(|| 0.0);
+    let first = use_mut_ref(|| true);
 
     let update = use_force_update();
     let swap_order = use_callback(
@@ -51,75 +53,129 @@ pub fn SortableList(props: &SortableListProps) -> Html {
     }
 
     (node_refs.borrow_mut()).resize_with(props.children.len(), NodeRef::default);
-
     let mut items = Vec::with_capacity(props.children.len());
 
-    for (i, index) in order.borrow().iter().enumerate() {
-        let child = props.children.iter().nth(*index).unwrap();
-        let node_ref = node_refs.borrow()[i].clone();
+    let is_first = *first.borrow();
+    *first.borrow_mut() = drag_index.is_none();
 
-        let ondropbefore = {
-            let drag_index = drag_index.clone();
+    let is_smooth = props.smooth && drag_index.is_some() && !is_first;
 
-            swap_order.reform(move |_| {
-                if let Some(index) = *drag_index {
-                    drag_index.set(None);
+    let ondragleave = {
+        let hover_index = hover_index.clone();
 
-                    if index < i {
-                        (index, i - 1)
-                    } else {
-                        (index, i)
-                    }
+        Callback::from(move |_| {
+            hover_index.set(None);
+        })
+    };
+
+    let spacer_ondrop = {
+        let drag_index = drag_index.clone();
+        let hover_index = hover_index.clone();
+        let swap_order = swap_order.clone();
+
+        Callback::from(move |_| {
+            if let (Some(drag_index), Some(hover_index)) = (*drag_index, *hover_index) {
+                if hover_index > drag_index {
+                    swap_order.emit((drag_index, hover_index - 1));
                 } else {
-                    (0, 0)
+                    swap_order.emit((drag_index, hover_index));
                 }
-            })
-        };
+            }
 
-        let ondropafter = {
-            let drag_index = drag_index.clone();
+            drag_index.set(None);
+            hover_index.set(None);
+        })
+    };
 
-            swap_order.reform(move |_| {
-                if let Some(index) = *drag_index {
-                    drag_index.set(None);
+    for (i, index) in order.borrow().iter().enumerate() {
+        let node_ref = node_refs.borrow()[*index].clone();
+        let child = props.children.iter().nth(*index).unwrap();
 
-                    if index < i {
-                        (index, i)
-                    } else {
-                        (index, i + 1)
-                    }
+        let onhover = {
+            let hover_index = hover_index.clone();
+
+            Callback::from(move |is_before| {
+                if is_before {
+                    hover_index.set(Some(i));
                 } else {
-                    (0, 0)
+                    hover_index.set(Some(i + 1));
                 }
             })
         };
 
         let ondrag = {
             let drag_index = drag_index.clone();
+            let hover_index = hover_index.clone();
+            let hover_space = hover_space.clone();
+            let direction = props.direction;
 
-            Callback::from(move |_| {
+            Callback::from(move |event: crate::drag::DragEvent| {
                 drag_index.set(Some(i));
+                hover_index.set(Some(i + 1));
+
+                let element = event.node_ref.cast::<HtmlElement>().unwrap();
+                let size = size(&element, direction);
+
+                hover_space.set(size);
             })
         };
 
+        let spacer_onhover = {
+            let hover_index = hover_index.clone();
+
+            Callback::from(move |_| {
+                hover_index.set(Some(i));
+            })
+        };
+
+        let space = if *hover_index == Some(i) {
+            *hover_space
+        } else {
+            0.0
+        };
+
         let item = html! {
-            <Item
-                node_ref={ node_ref }
-                direction={ props.direction }
-                smooth={ *is_smooth && props.smooth }
-                ondrag={ ondrag }
-                ondropbefore={ ondropbefore }
-                ondropafter={ ondropafter }
-            >
-                { child }
-            </Item>
+            <>
+                <Droppable
+                    ondrag={ spacer_onhover }
+                    ondrop={ spacer_ondrop.clone() }
+                    ondragleave={ ondragleave.clone() }
+                >
+                    <Spacer
+                        direction={ props.direction }
+                        size={ space }
+                        smooth={ is_smooth }
+                    />
+                </Droppable>
+                <Item
+                    onhover={ onhover }
+                    ondrag={ ondrag }
+                    ondrop={ spacer_ondrop.clone() }
+                    direction={ props.direction }
+                    node_ref={ node_ref.clone() }
+                >
+                    { child }
+                </Item>
+            </>
         };
 
         items.push(item);
     }
 
-    web_sys::console::log_1(&format!("render {}", *is_smooth).into());
-    is_smooth.set(drag_index.is_some());
+    let spacer_onhover = {
+        let hover_index = hover_index.clone();
+        let i = props.children.len();
+
+        Callback::from(move |_| {
+            hover_index.set(Some(i));
+        })
+    };
+
+    let space = if *hover_index == Some(props.children.len()) {
+        *hover_space
+    } else {
+        0.0
+    };
 
     let mut style = Style::new();
     style.set("display", "flex");
@@ -129,136 +185,97 @@ pub fn SortableList(props: &SortableListProps) -> Html {
         <DragArea>
             <div class="garlic-sortable-list" {style}>
                 { for items }
+
+                <Droppable
+                    ondrag={ spacer_onhover }
+                    ondrop={ spacer_ondrop.clone() }
+                >
+                    <Spacer
+                        direction={ props.direction }
+                        size={ space }
+                    />
+                </Droppable>
             </div>
         </DragArea>
     }
 }
 
-#[derive(Properties, PartialEq)]
-struct ItemProps {
+#[derive(Clone, Properties, PartialEq)]
+pub struct ItemProps {
     #[prop_or_default]
-    node_ref: NodeRef,
+    pub children: Children,
     #[prop_or_default]
-    children: Children,
+    pub node_ref: NodeRef,
     #[prop_or_default]
-    smooth: bool,
+    pub direction: Direction,
     #[prop_or_default]
-    ondrag: Callback<crate::drag::DragEvent>,
+    pub smooth: bool,
     #[prop_or_default]
-    ondropbefore: Callback<crate::drag::DragEvent>,
+    pub onhover: Callback<bool>,
     #[prop_or_default]
-    ondropafter: Callback<crate::drag::DragEvent>,
+    pub ondrag: Callback<crate::drag::DragEvent>,
     #[prop_or_default]
-    direction: Direction,
+    pub ondrop: Callback<crate::drag::DragEvent>,
+}
+
+fn position(position: DragPosition, direction: Direction) -> f32 {
+    match direction {
+        Direction::Row => position.x as f32,
+        Direction::Column => position.y as f32,
+    }
+}
+
+fn size(element: &HtmlElement, direction: Direction) -> f32 {
+    match direction {
+        Direction::Row => element.offset_width() as f32,
+        Direction::Column => element.offset_height() as f32,
+    }
+}
+
+fn middle(elemeent: &HtmlElement, direction: Direction) -> f32 {
+    let rect = elemeent.get_bounding_client_rect();
+
+    match direction {
+        Direction::Row => rect.x() as f32 + rect.width() as f32 / 2.0,
+        Direction::Column => rect.y() as f32 + rect.height() as f32 / 2.0,
+    }
 }
 
 #[function_component]
-fn Item(props: &ItemProps) -> Html {
+pub fn Item(props: &ItemProps) -> Html {
     let node_ref = use_node_ref();
-    let use_start = use_state_eq(Option::<bool>::default);
-    let start_spacing = use_state_eq(|| 0.0);
-    let end_spacing = use_state_eq(|| 0.0);
 
-    let ondrag = use_callback(
-        |event: crate::drag::DragEvent, (node_ref, start, end, use_start, direction)| {
-            let element = event.node_ref.cast::<HtmlElement>().unwrap();
+    let onhover = use_callback(
+        |event: crate::drag::DragEvent, (node_ref, props)| {
+            let droppable = node_ref.cast::<HtmlElement>().unwrap();
 
-            let size = if direction.is_vertical() {
-                element.offset_height()
-            } else {
-                element.offset_width()
-            };
+            let position = position(event.position, props.direction);
+            let middle = middle(&droppable, props.direction);
 
-            if **use_start != Some(false) {
-                start.set(size as f32);
-                end.set(0.0);
-            } else {
-                start.set(0.0);
-                end.set(size as f32);
-            }
-
-            let element = node_ref.cast::<HtmlElement>().unwrap();
-
-            let middle = if direction.is_vertical() {
-                element.offset_top() + element.offset_height() / 2
-            } else {
-                element.offset_left() + element.offset_width() / 2
-            };
-
-            let pointer = if direction.is_vertical() {
-                event.position.y
-            } else {
-                event.position.x
-            };
-
-            if pointer < middle {
-                use_start.set(Some(true));
-            } else {
-                use_start.set(Some(false));
-            }
+            let is_before = position < middle;
+            props.onhover.emit(is_before);
         },
-        (
-            node_ref.clone(),
-            start_spacing.clone(),
-            end_spacing.clone(),
-            use_start.clone(),
-            props.direction,
-        ),
+        (node_ref.clone(), props.clone()),
     );
 
-    let ondragleave = use_callback(
-        |_, (start_spacing, end_spacing, use_start)| {
-            start_spacing.set(0.0);
-            end_spacing.set(0.0);
-            use_start.set(None);
-        },
-        (
-            start_spacing.clone(),
-            end_spacing.clone(),
-            use_start.clone(),
-        ),
-    );
+    let mut style = Style::new();
 
-    let ondrop = use_callback(
-        |event: crate::drag::DragEvent, (ondropbefore, ondropafter, use_start)| {
-            if **use_start != Some(false) {
-                ondropbefore.emit(event);
-            } else {
-                ondropafter.emit(event);
-            }
-        },
-        (
-            props.ondropbefore.clone(),
-            props.ondropafter.clone(),
-            use_start.clone(),
-        ),
-    );
+    style.set("display", "block");
 
     html! {
         <Droppable
-            ondrag={ ondrag }
-            ondrop={ ondrop }
-            ondragleave={ ondragleave }
-            node_ref={ node_ref }
+            ondrag={ onhover }
+            node_ref={ node_ref.clone() }
         >
-            <Spacer
-                size={ *start_spacing }
-                direction={ props.direction }
-                smooth={ props.smooth }
-            />
-
             <Draggable
                 ondrag={ props.ondrag.clone() }
+                ondrop={ props.ondrop.clone() }
                 node_ref={ props.node_ref.clone() }
             >
-                { for props.children.iter() }
+                <div class="garlic-sortable-list-item" style={ style }>
+                    { props.children.clone() }
+                </div>
             </Draggable>
-
-            <Spacer
-                size={ *end_spacing }
-                direction={ props.direction }
-                smooth={ props.smooth }
-            />
         </Droppable>
     }
 }

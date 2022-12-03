@@ -17,11 +17,11 @@ pub fn Spacer(props: &SpacerProps) -> Html {
     let size = use_mut_ref(|| props.size);
 
     let animation_frame = use_animation_frame();
-    if f32::abs(*size.borrow() - props.size) > 0.01 {
+    if f32::abs(*size.borrow() - props.size) > 0.1 {
         if props.smooth {
             let mut size = size.borrow_mut();
             let diff = props.size - *size;
-            *size += diff * 0.1;
+            *size += diff / 2.0;
 
             animation_frame.request();
         } else {

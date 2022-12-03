@@ -3,7 +3,7 @@ use yew::prelude::*;
 
 use crate::Style;
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DragPosition {
     pub x: i32,
     pub y: i32,
@@ -105,6 +105,8 @@ pub struct DraggableProps {
     pub keep_space: bool,
     #[prop_or_default]
     pub ondrag: Callback<DragEvent>,
+    #[prop_or_default]
+    pub ondrop: Callback<DragEvent>,
 }
 
 #[function_component]
@@ -160,15 +162,25 @@ pub fn Draggable(props: &DraggableProps) -> Html {
     );
 
     let onpointerup = use_callback(
-        |event: PointerEvent, (node_ref, context)| {
+        |event: PointerEvent, (node_ref, context, ondrop)| {
             if context.is_dragged(&node_ref) {
                 event.prevent_default();
                 event.stop_propagation();
 
+                let drag_event = DragEvent {
+                    position: DragPosition::new(&event),
+                    node_ref: node_ref.clone(),
+                };
+
                 context.ondrop.emit(node_ref.clone());
+                ondrop.emit(drag_event);
             }
         },
-        (props.node_ref.clone(), context.clone()),
+        (
+            props.node_ref.clone(),
+            context.clone(),
+            props.ondrop.clone(),
+        ),
     );
 
     let mut style = Style::new();
@@ -223,12 +235,12 @@ pub struct DroppableProps {
 fn is_inside(node_ref: &NodeRef, x: i32, y: i32) -> bool {
     let element = node_ref.cast::<HtmlElement>().unwrap();
 
-    let left = element.offset_left();
-    let top = element.offset_top();
-    let right = left + element.offset_width();
-    let bottom = top + element.offset_height();
+    let rect = element.get_bounding_client_rect();
 
-    x > left && x <= right && y > top && y <= bottom
+    x >= rect.left() as i32
+        && x <= rect.right() as i32
+        && y >= rect.top() as i32
+        && y <= rect.bottom() as i32
 }
 
 #[function_component]
