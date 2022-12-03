@@ -9,6 +9,8 @@ pub struct SortableListProps {
     pub children: Children,
     #[prop_or_default]
     pub direction: Direction,
+    #[prop_or_else(|| true)]
+    pub smooth: bool,
     pub onorder: Option<Callback<Vec<usize>>>,
 }
 
@@ -17,6 +19,7 @@ pub fn SortableList(props: &SortableListProps) -> Html {
     let node_refs = use_mut_ref(Vec::<NodeRef>::new);
     let order = use_mut_ref(Vec::<usize>::new);
     let drag_index = use_state_eq(Option::<usize>::default);
+    let is_smooth = use_state_eq(|| false);
 
     let update = use_force_update();
     let swap_order = use_callback(
@@ -103,7 +106,7 @@ pub fn SortableList(props: &SortableListProps) -> Html {
             <Item
                 node_ref={ node_ref }
                 direction={ props.direction }
-                smooth={ drag_index.is_some() }
+                smooth={ *is_smooth && props.smooth }
                 ondrag={ ondrag }
                 ondropbefore={ ondropbefore }
                 ondropafter={ ondropafter }
@@ -114,6 +117,9 @@ pub fn SortableList(props: &SortableListProps) -> Html {
 
         items.push(item);
     }
+
+    web_sys::console::log_1(&format!("render {}", *is_smooth).into());
+    is_smooth.set(drag_index.is_some());
 
     let mut style = Style::new();
     style.set("display", "flex");
@@ -149,7 +155,7 @@ struct ItemProps {
 #[function_component]
 fn Item(props: &ItemProps) -> Html {
     let node_ref = use_node_ref();
-    let use_start = use_state_eq(|| true);
+    let use_start = use_state_eq(Option::<bool>::default);
     let start_spacing = use_state_eq(|| 0.0);
     let end_spacing = use_state_eq(|| 0.0);
 
@@ -163,7 +169,7 @@ fn Item(props: &ItemProps) -> Html {
                 element.offset_width()
             };
 
-            if **use_start {
+            if **use_start != Some(false) {
                 start.set(size as f32);
                 end.set(0.0);
             } else {
@@ -186,9 +192,9 @@ fn Item(props: &ItemProps) -> Html {
             };
 
             if pointer < middle {
-                use_start.set(true);
+                use_start.set(Some(true));
             } else {
-                use_start.set(false);
+                use_start.set(Some(false));
             }
         },
         (
@@ -201,16 +207,21 @@ fn Item(props: &ItemProps) -> Html {
     );
 
     let ondragleave = use_callback(
-        |_, (start_spacing, end_spacing)| {
+        |_, (start_spacing, end_spacing, use_start)| {
             start_spacing.set(0.0);
             end_spacing.set(0.0);
+            use_start.set(None);
         },
-        (start_spacing.clone(), end_spacing.clone()).clone(),
+        (
+            start_spacing.clone(),
+            end_spacing.clone(),
+            use_start.clone(),
+        ),
     );
 
     let ondrop = use_callback(
         |event: crate::drag::DragEvent, (ondropbefore, ondropafter, use_start)| {
-            if **use_start {
+            if **use_start != Some(false) {
                 ondropbefore.emit(event);
             } else {
                 ondropafter.emit(event);

@@ -4,22 +4,13 @@ use yew::prelude::*;
 #[function_component]
 pub fn App() -> Html {
     html! {
-        <>
-            <SortableList>
-                { "A" }
-                { "B" }
-                { "C" }
-                { "D" }
-                { "E" }
-            </SortableList>
-            <SortableList>
-                { "A" }
-                { "B" }
-                { "C" }
-                { "D" }
-                { "E" }
-            </SortableList>
-        </>
+        <SortableList>
+            { "A" }
+            { "B" }
+            { "C" }
+            { "D" }
+            { "E" }
+        </SortableList>
     }
 }
 

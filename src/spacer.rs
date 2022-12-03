@@ -21,7 +21,7 @@ pub fn Spacer(props: &SpacerProps) -> Html {
         if props.smooth {
             let mut size = size.borrow_mut();
             let diff = props.size - *size;
-            *size += diff / 2.0;
+            *size += diff * 0.1;
 
             animation_frame.request();
         } else {
