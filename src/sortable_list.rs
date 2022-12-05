@@ -6,6 +6,12 @@ use crate::{function::AnimationFrame, DetectResize, Direction, DragArea, Draggab
 #[derive(Properties, PartialEq)]
 pub struct SortableListProps {
     #[prop_or_default]
+    pub class: Classes,
+    #[prop_or_default]
+    pub style: String,
+    #[prop_or_default]
+    pub node_ref: NodeRef,
+    #[prop_or_default]
     pub children: Children,
     #[prop_or_default]
     pub direction: Direction,
@@ -15,34 +21,10 @@ pub struct SortableListProps {
 
 #[function_component]
 pub fn SortableList(props: &SortableListProps) -> Html {
-    struct Slide {
-        to: usize,
-        from: usize,
-        time: f32,
-    }
-
-    impl Slide {
-        fn new(index: usize) -> Self {
-            Self {
-                to: index,
-                from: index,
-                time: 0.0,
-            }
-        }
-
-        fn slide(&mut self, to: usize) {
-            self.from = self.to;
-            self.to = to;
-            self.time = 1.0;
-        }
-    }
-
     let node_refs = use_mut_ref(Vec::<NodeRef>::new);
     let order = use_mut_ref(Vec::<usize>::new);
     let positions = use_mut_ref(Vec::<(f32, f32)>::new);
     let slide = use_mut_ref(Option::<Slide>::default);
-
-    let node_ref = use_node_ref();
 
     let drag = use_state_eq(Option::<usize>::default);
 
@@ -78,7 +60,7 @@ pub fn SortableList(props: &SortableListProps) -> Html {
     let mut x = 0.0;
     let mut y = 0.0;
 
-    if let Some(element) = node_ref.cast::<HtmlElement>() {
+    if let Some(element) = props.node_ref.cast::<HtmlElement>() {
         x = element.offset_left() as f32;
         y = element.offset_top() as f32;
     }
@@ -88,7 +70,6 @@ pub fn SortableList(props: &SortableListProps) -> Html {
             slide.time *= 0.8;
 
             frame.request();
-            web_sys::console::log_1(&format!("slide").into());
         } else {
             slide.time = 0.0;
         }
@@ -256,20 +237,45 @@ pub fn SortableList(props: &SortableListProps) -> Html {
         )
     };
 
-    let style = Style::new()
+    let mut style = Style::new()
         .with("width", format!("{}px", width))
         .with("height", format!("{}px", height));
 
+    style.parse(&props.style);
+
     html! {
         <DragArea
+            class={ classes!("garlic-sortable-list", props.class.clone()) }
             style={ style }
             onmove={ onmove }
             ondrop={ ondrop }
             direction={ props.contain.then_some(props.direction) }
             contain={ props.contain }
-            node_ref={ node_ref }
+            node_ref={ props.node_ref.clone() }
         >
             { for items }
         </DragArea>
+    }
+}
+
+struct Slide {
+    to: usize,
+    from: usize,
+    time: f32,
+}
+
+impl Slide {
+    fn new(index: usize) -> Self {
+        Self {
+            to: index,
+            from: index,
+            time: 0.0,
+        }
+    }
+
+    fn slide(&mut self, to: usize) {
+        self.from = self.to;
+        self.to = to;
+        self.time = 1.0;
     }
 }
