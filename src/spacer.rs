@@ -1,6 +1,6 @@
 use yew::prelude::*;
 
-use crate::{function::use_animation_frame, Direction, Style};
+use crate::{Direction, Style};
 
 #[derive(Properties, PartialEq)]
 pub struct SpacerProps {
@@ -16,14 +16,11 @@ pub struct SpacerProps {
 pub fn Spacer(props: &SpacerProps) -> Html {
     let size = use_mut_ref(|| props.size);
 
-    let animation_frame = use_animation_frame();
     if f32::abs(*size.borrow() - props.size) > 0.1 {
         if props.smooth {
             let mut size = size.borrow_mut();
             let diff = props.size - *size;
             *size += diff / 2.0;
-
-            animation_frame.request();
         } else {
             *size.borrow_mut() = props.size;
         }

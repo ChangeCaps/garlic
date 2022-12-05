@@ -1,7 +1,7 @@
 use web_sys::HtmlElement;
 use yew::prelude::*;
 
-use crate::Style;
+use crate::{Direction, Style};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DragPosition {
@@ -10,12 +10,39 @@ pub struct DragPosition {
 }
 
 impl DragPosition {
-    #[inline]
     pub fn new(event: &MouseEvent) -> Self {
         Self {
             x: event.client_x(),
             y: event.client_y(),
         }
+    }
+
+    pub fn restrained(
+        &self,
+        mut new_position: Self,
+        node_ref: &NodeRef,
+        contain: bool,
+        direction: Option<Direction>,
+    ) -> Self {
+        if contain {
+            let element = node_ref.cast::<HtmlElement>().unwrap();
+
+            let rect = element.get_bounding_client_rect();
+
+            new_position.x = new_position.x.max(rect.left() as i32);
+            new_position.x = new_position.x.min(rect.right() as i32);
+
+            new_position.y = new_position.y.max(rect.top() as i32);
+            new_position.y = new_position.y.min(rect.bottom() as i32);
+        }
+
+        match direction {
+            Some(Direction::Row) => new_position.y = self.y,
+            Some(Direction::Column) => new_position.x = self.y,
+            _ => {}
+        }
+
+        new_position
     }
 }
 
@@ -42,41 +69,96 @@ impl DragContext {
 
 #[doc(hidden)]
 #[derive(Properties, PartialEq)]
-pub struct DragBaseProps {
+pub struct DragAreaProps {
+    #[prop_or_default]
+    pub class: Classes,
+    #[prop_or_default]
+    pub style: String,
     #[prop_or_default]
     pub children: Children,
+    /// The direction of the drag area.
+    ///
+    /// If set dragging will only be possible in the specified direction.
+    pub direction: Option<Direction>,
+    /// If true, dragging outside of the drag area will be prevented.
+    #[prop_or_default]
+    pub contain: bool,
+    #[prop_or_default]
+    pub node_ref: NodeRef,
+    /// Called when the drag starts.
+    #[prop_or_default]
+    pub ondrag: Callback<DragEvent>,
+    /// Called when the drag moves.
+    #[prop_or_default]
+    pub onmove: Callback<DragEvent>,
+    /// Called when the drag ends.
+    #[prop_or_default]
+    pub ondrop: Callback<DragEvent>,
 }
 
 #[function_component]
-pub fn DragArea(props: &DragBaseProps) -> Html {
+pub fn DragArea(props: &DragAreaProps) -> Html {
     let dragged = use_state(NodeRef::default);
     let is_dragging = use_state(|| false);
     let position = use_state(DragPosition::default);
 
     let ondrag = use_callback(
-        |event: DragEvent, (dragged, is_dragging, position)| {
-            dragged.set(event.node_ref);
-            is_dragging.set(true);
+        |event: DragEvent, (dragged, is_dragging, position, ondrag)| {
+            dragged.set(event.node_ref.clone());
             position.set(event.position);
+            is_dragging.set(true);
+            ondrag.emit(event);
         },
-        (dragged.clone(), is_dragging.clone(), position.clone()),
+        (
+            dragged.clone(),
+            is_dragging.clone(),
+            position.clone(),
+            props.ondrag.clone(),
+        ),
     );
 
     let onmove = use_callback(
-        |new_position: DragPosition, position| {
-            position.set(new_position);
+        |new_position: DragPosition, (node_ref, dragged, position, onmove, contain, direction)| {
+            let restrained = position.restrained(new_position, node_ref, *contain, *direction);
+
+            position.set(restrained);
+
+            let event = DragEvent {
+                node_ref: (**dragged).clone(),
+                position: restrained,
+            };
+
+            onmove.emit(event);
         },
-        position.clone(),
+        (
+            props.node_ref.clone(),
+            dragged.clone(),
+            position.clone(),
+            props.onmove.clone(),
+            props.contain,
+            props.direction,
+        ),
     );
 
-    let ondrop = use_callback(
-        |node: NodeRef, (dragged, is_dragging)| {
-            if **dragged == node && **is_dragging {
-                is_dragging.set(false);
-            }
-        },
-        (dragged.clone(), is_dragging.clone()),
-    );
+    let ondrop = {
+        let position = position.clone();
+
+        use_callback(
+            move |node: NodeRef, (dragged, is_dragging, ondrop)| {
+                if **dragged == node && **is_dragging {
+                    is_dragging.set(false);
+
+                    let event = DragEvent {
+                        node_ref: (**dragged).clone(),
+                        position: *position,
+                    };
+
+                    ondrop.emit(event);
+                }
+            },
+            (dragged.clone(), is_dragging.clone(), props.ondrop.clone()),
+        )
+    };
 
     let context = DragContext {
         dragged: (*dragged).clone(),
@@ -86,33 +168,54 @@ pub fn DragArea(props: &DragBaseProps) -> Html {
         ondrop,
     };
 
+    let mut style = Style::new()
+        .with("width", "fit-content")
+        .with("height", "fit-content");
+
+    style.parse(&props.style);
+
     html! {
-        <ContextProvider<DragContext> {context}>
-            <ContextProvider<DragPosition> context={(*position).clone()}>
-                { for props.children.iter() }
-            </ContextProvider<DragPosition>>
-        </ContextProvider<DragContext>>
+        <div
+            class={ classes!("garlic-drag-area", props.class.clone()) }
+            style={ style }
+            ref={ props.node_ref.clone() }
+        >
+            <ContextProvider<DragContext> { context }>
+                <ContextProvider<DragPosition> context={ *position }>
+                    { for props.children.iter() }
+                </ContextProvider<DragPosition>>
+            </ContextProvider<DragContext>>
+        </div>
     }
 }
 
 #[derive(Properties, PartialEq)]
 pub struct DraggableProps {
     #[prop_or_default]
-    pub node_ref: NodeRef,
+    pub class: Classes,
+    #[prop_or_default]
+    pub style: String,
     #[prop_or_default]
     pub children: Children,
     #[prop_or_default]
+    pub node_ref: NodeRef,
+    #[prop_or_default]
     pub keep_space: bool,
+    /// Called when the element is dragged.
     #[prop_or_default]
     pub ondrag: Callback<DragEvent>,
+    /// Called when the element is moved while being dragging.
+    #[prop_or_default]
+    pub onmove: Callback<DragEvent>,
+    /// Called when the element is dropped.
     #[prop_or_default]
     pub ondrop: Callback<DragEvent>,
 }
 
 #[function_component]
 pub fn Draggable(props: &DraggableProps) -> Html {
-    let context = use_context::<DragContext>().expect("Draggable must be used inside DragBase");
-    let position = use_context::<DragPosition>().expect("Draggable must be used inside DragBase");
+    let context = use_context::<DragContext>().expect("Draggable must be used inside DragArea");
+    let position = use_context::<DragPosition>().expect("Draggable must be used inside DragArea");
     let offset = use_state(DragPosition::default);
 
     let onpointerdown = use_callback(
@@ -150,15 +253,27 @@ pub fn Draggable(props: &DraggableProps) -> Html {
     );
 
     let onpointermove = use_callback(
-        |event: PointerEvent, (node_ref, context)| {
+        |event: PointerEvent, (node_ref, context, onmove)| {
             if context.is_dragged(&node_ref) {
                 event.prevent_default();
                 event.stop_propagation();
 
-                context.onmove.emit(DragPosition::new(&event));
+                let position = DragPosition::new(&event);
+
+                let event = DragEvent {
+                    position,
+                    node_ref: node_ref.clone(),
+                };
+
+                context.onmove.emit(position);
+                onmove.emit(event);
             }
         },
-        (props.node_ref.clone(), context.clone()),
+        (
+            props.node_ref.clone(),
+            context.clone(),
+            props.onmove.clone(),
+        ),
     );
 
     let onpointerup = use_callback(
@@ -185,6 +300,8 @@ pub fn Draggable(props: &DraggableProps) -> Html {
 
     let mut style = Style::new();
 
+    style.parse(&props.style);
+
     if context.is_dragged(&props.node_ref) {
         style.set("position", "absolute");
         style.set("left", format!("{}px", position.x - offset.x));
@@ -197,11 +314,11 @@ pub fn Draggable(props: &DraggableProps) -> Html {
 
     html! {
         <div
-            class="garlic-draggable"
-            {onpointerdown}
-            {onpointermove}
-            {onpointerup}
-            {style}
+            class={ classes!("garlic-draggable", props.class.clone()) }
+            onpointerdown={ onpointerdown }
+            onpointermove={ onpointermove }
+            onpointerup={ onpointerup }
+            style={ style }
             ref={props.node_ref.clone()}
         >
             { for props.children.iter() }
@@ -217,6 +334,10 @@ pub struct DragEvent {
 
 #[derive(Clone, Properties, PartialEq)]
 pub struct DroppableProps {
+    #[prop_or_default]
+    pub class: Classes,
+    #[prop_or_default]
+    pub style: String,
     #[prop_or_default]
     pub children: Children,
     #[prop_or_default]
@@ -245,8 +366,8 @@ fn is_inside(node_ref: &NodeRef, x: i32, y: i32) -> bool {
 
 #[function_component]
 pub fn Droppable(props: &DroppableProps) -> Html {
-    let context = use_context::<DragContext>().expect("DropArea must be used inside DragBase");
-    let position = use_context::<DragPosition>().expect("DropArea must be used inside DragBase");
+    let context = use_context::<DragContext>().expect("Droppable must be used inside DragArea");
+    let position = use_context::<DragPosition>().expect("Droppable must be used inside DragArea");
     let entered = use_state(|| false);
 
     use_effect_with_deps(
@@ -289,41 +410,19 @@ pub fn Droppable(props: &DroppableProps) -> Html {
         ),
     );
 
+    let mut style = Style::new()
+        .with("width", "fit-content")
+        .with("height", "fit-content");
+
+    style.parse(&props.style);
+
     html! {
         <div
-            class="garlic-drop-area"
-            ref={props.node_ref.clone()}
+            class={ classes!("garlic-droppable", props.class.clone()) }
+            style={ style }
+            ref={ props.node_ref.clone() }
         >
             { for props.children.iter() }
-        </div>
-    }
-}
-
-#[function_component]
-pub fn DragTest() -> Html {
-    let color = use_state(|| "red".to_string());
-
-    let ondragenter = use_callback(
-        |_, color| {
-            color.set("blue".to_string());
-        },
-        color.clone(),
-    );
-
-    let ondragleave = use_callback(
-        |_, color| {
-            color.set("red".to_string());
-        },
-        color.clone(),
-    );
-
-    html! {
-        <div class="garlic-drag-test">
-            <Droppable {ondragenter} {ondragleave}>
-                <div style={format!("color: {}", *color)}>
-                    { "Drop here" }
-                </div>
-            </Droppable>
         </div>
     }
 }

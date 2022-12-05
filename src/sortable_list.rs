@@ -1,7 +1,7 @@
 use web_sys::HtmlElement;
 use yew::prelude::*;
 
-use crate::{Direction, DragArea, DragPosition, Draggable, Droppable, Spacer, Style};
+use crate::{function::AnimationFrame, DetectResize, Direction, DragArea, Draggable, Style};
 
 #[derive(Properties, PartialEq)]
 pub struct SortableListProps {
@@ -9,273 +9,267 @@ pub struct SortableListProps {
     pub children: Children,
     #[prop_or_default]
     pub direction: Direction,
-    #[prop_or_else(|| true)]
-    pub smooth: bool,
-    pub onorder: Option<Callback<Vec<usize>>>,
+    #[prop_or_default]
+    pub contain: bool,
 }
 
 #[function_component]
 pub fn SortableList(props: &SortableListProps) -> Html {
-    let order = use_mut_ref(Vec::<usize>::new);
-    let node_refs = use_mut_ref(Vec::<NodeRef>::new);
-    let drag_index = use_state_eq(Option::<usize>::default);
-    let hover_index = use_state_eq(Option::<usize>::default);
-    let hover_space = use_state_eq(|| 0.0);
-    let first = use_mut_ref(|| true);
+    struct Slide {
+        to: usize,
+        from: usize,
+        time: f32,
+    }
 
-    let update = use_force_update();
-    let swap_order = use_callback(
-        move |(index, new_index), (order, onorder)| {
-            if index == new_index {
-                return;
+    impl Slide {
+        fn new(index: usize) -> Self {
+            Self {
+                to: index,
+                from: index,
+                time: 0.0,
             }
+        }
 
-            let mut order = order.borrow_mut();
-            let i = order.remove(index);
-            order.insert(new_index, i);
-
-            if let Some(onorder) = onorder {
-                onorder.emit(order.clone());
-            }
-
-            update.force_update();
-        },
-        (order.clone(), props.onorder.clone()),
-    );
-
-    if order.borrow().len() != props.children.len() {
-        let mut order = order.borrow_mut();
-        order.clear();
-
-        for i in 0..props.children.len() {
-            order.push(i);
+        fn slide(&mut self, to: usize) {
+            self.from = self.to;
+            self.to = to;
+            self.time = 1.0;
         }
     }
 
-    (node_refs.borrow_mut()).resize_with(props.children.len(), NodeRef::default);
-    let mut items = Vec::with_capacity(props.children.len());
+    let node_refs = use_mut_ref(Vec::<NodeRef>::new);
+    let order = use_mut_ref(Vec::<usize>::new);
+    let positions = use_mut_ref(Vec::<(f32, f32)>::new);
+    let slide = use_mut_ref(Option::<Slide>::default);
 
-    let is_first = *first.borrow();
-    *first.borrow_mut() = drag_index.is_none();
+    let node_ref = use_node_ref();
 
-    let is_smooth = props.smooth && drag_index.is_some() && !is_first;
+    let drag = use_state_eq(Option::<usize>::default);
 
-    let ondragleave = {
-        let hover_index = hover_index.clone();
-
-        Callback::from(move |_| {
-            hover_index.set(None);
-        })
+    let update = use_force_update();
+    let frame = {
+        let update = update.clone();
+        AnimationFrame::new(move || update.force_update())
     };
 
-    let spacer_ondrop = {
-        let drag_index = drag_index.clone();
-        let hover_index = hover_index.clone();
-        let swap_order = swap_order.clone();
+    if node_refs.borrow().len() != props.children.len() {
+        let mut node_refs = node_refs.borrow_mut();
+        for i in node_refs.len()..props.children.len() {
+            node_refs.push(NodeRef::default());
+            order.borrow_mut().push(i);
+            positions.borrow_mut().push((0.0, 0.0));
+        }
 
-        Callback::from(move |_| {
-            if let (Some(drag_index), Some(hover_index)) = (*drag_index, *hover_index) {
-                if hover_index > drag_index {
-                    swap_order.emit((drag_index, hover_index - 1));
-                } else {
-                    swap_order.emit((drag_index, hover_index));
-                }
-            }
-
-            drag_index.set(None);
-            hover_index.set(None);
-        })
-    };
-
-    for (i, index) in order.borrow().iter().enumerate() {
-        let node_ref = node_refs.borrow()[*index].clone();
-        let child = props.children.iter().nth(*index).unwrap();
-
-        let onhover = {
-            let hover_index = hover_index.clone();
-
-            Callback::from(move |is_before| {
-                if is_before {
-                    hover_index.set(Some(i));
-                } else {
-                    hover_index.set(Some(i + 1));
-                }
-            })
-        };
-
-        let ondrag = {
-            let drag_index = drag_index.clone();
-            let hover_index = hover_index.clone();
-            let hover_space = hover_space.clone();
-            let direction = props.direction;
-
-            Callback::from(move |event: crate::drag::DragEvent| {
-                drag_index.set(Some(i));
-                hover_index.set(Some(i + 1));
-
-                let element = event.node_ref.cast::<HtmlElement>().unwrap();
-                let size = size(&element, direction);
-
-                hover_space.set(size);
-            })
-        };
-
-        let spacer_onhover = {
-            let hover_index = hover_index.clone();
-
-            Callback::from(move |_| {
-                hover_index.set(Some(i));
-            })
-        };
-
-        let space = if *hover_index == Some(i) {
-            *hover_space
-        } else {
-            0.0
-        };
-
-        let item = html! {
-            <>
-                <Droppable
-                    ondrag={ spacer_onhover }
-                    ondrop={ spacer_ondrop.clone() }
-                    ondragleave={ ondragleave.clone() }
-                >
-                    <Spacer
-                        direction={ props.direction }
-                        size={ space }
-                        smooth={ is_smooth }
-                    />
-                </Droppable>
-                <Item
-                    onhover={ onhover }
-                    ondrag={ ondrag }
-                    ondrop={ spacer_ondrop.clone() }
-                    direction={ props.direction }
-                    node_ref={ node_ref.clone() }
-                >
-                    { child }
-                </Item>
-            </>
-        };
-
-        items.push(item);
+        update.force_update();
     }
 
-    let spacer_onhover = {
-        let hover_index = hover_index.clone();
-        let i = props.children.len();
+    let drag_size = if let Some(index) = *drag {
+        let node_ref = node_refs.borrow()[index].clone();
+        let element = node_ref.cast::<HtmlElement>().unwrap();
 
-        Callback::from(move |_| {
-            hover_index.set(Some(i));
-        })
-    };
-
-    let space = if *hover_index == Some(props.children.len()) {
-        *hover_space
+        match props.direction {
+            Direction::Row => element.offset_width() as f32,
+            Direction::Column => element.offset_height() as f32,
+        }
     } else {
         0.0
     };
 
-    let mut style = Style::new();
-    style.set("display", "flex");
-    style.set("flex-direction", props.direction.to_string());
+    let mut x = 0.0;
+    let mut y = 0.0;
 
-    html! {
-        <DragArea>
-            <div class="garlic-sortable-list" {style}>
-                { for items }
-
-                <Droppable
-                    ondrag={ spacer_onhover }
-                    ondrop={ spacer_ondrop.clone() }
-                >
-                    <Spacer
-                        direction={ props.direction }
-                        size={ space }
-                    />
-                </Droppable>
-            </div>
-        </DragArea>
+    if let Some(element) = node_ref.cast::<HtmlElement>() {
+        x = element.offset_left() as f32;
+        y = element.offset_top() as f32;
     }
-}
 
-#[derive(Clone, Properties, PartialEq)]
-pub struct ItemProps {
-    #[prop_or_default]
-    pub children: Children,
-    #[prop_or_default]
-    pub node_ref: NodeRef,
-    #[prop_or_default]
-    pub direction: Direction,
-    #[prop_or_default]
-    pub smooth: bool,
-    #[prop_or_default]
-    pub onhover: Callback<bool>,
-    #[prop_or_default]
-    pub ondrag: Callback<crate::drag::DragEvent>,
-    #[prop_or_default]
-    pub ondrop: Callback<crate::drag::DragEvent>,
-}
+    if let Some(slide) = slide.borrow_mut().as_mut() {
+        if slide.time > 0.001 {
+            slide.time *= 0.8;
 
-fn position(position: DragPosition, direction: Direction) -> f32 {
-    match direction {
-        Direction::Row => position.x as f32,
-        Direction::Column => position.y as f32,
+            frame.request();
+            web_sys::console::log_1(&format!("slide").into());
+        } else {
+            slide.time = 0.0;
+        }
     }
-}
 
-fn size(element: &HtmlElement, direction: Direction) -> f32 {
-    match direction {
-        Direction::Row => element.offset_width() as f32,
-        Direction::Column => element.offset_height() as f32,
+    let mut width = 0.0f32;
+    let mut height = 0.0f32;
+    for (i, &o) in order.borrow().iter().enumerate() {
+        if let Some(element) = node_refs.borrow()[o].cast::<HtmlElement>() {
+            let rect = element.get_bounding_client_rect();
+
+            match props.direction {
+                Direction::Row => {
+                    width += rect.width() as f32;
+                    height = height.max(rect.height() as f32);
+                }
+                Direction::Column => {
+                    width = width.max(rect.width() as f32);
+                    height += rect.height() as f32;
+                }
+            }
+
+            if let Some(slide) = slide.borrow().as_ref() {
+                let mut offset = 0.0;
+
+                if slide.to == i {
+                    offset += (1.0 - slide.time) * drag_size;
+                }
+
+                if slide.from == i {
+                    offset += slide.time * drag_size;
+                }
+
+                match props.direction {
+                    Direction::Row => x += offset,
+                    Direction::Column => y += offset,
+                }
+            }
+
+            positions.borrow_mut()[o] = (x, y);
+
+            if Some(i) == *drag {
+                continue;
+            }
+
+            match props.direction {
+                Direction::Row => x += rect.width() as f32,
+                Direction::Column => y += rect.height() as f32,
+            }
+        }
     }
-}
 
-fn middle(elemeent: &HtmlElement, direction: Direction) -> f32 {
-    let rect = elemeent.get_bounding_client_rect();
+    let mut items = Vec::with_capacity(props.children.len());
+    for (o, child) in props.children.iter().enumerate() {
+        let node_ref = node_refs.borrow()[o].clone();
+        let (x, y) = positions.borrow()[o];
+        let i = order.borrow().iter().position(|&i| i == o).unwrap();
 
-    match direction {
-        Direction::Row => rect.x() as f32 + rect.width() as f32 / 2.0,
-        Direction::Column => rect.y() as f32 + rect.height() as f32 / 2.0,
-    }
-}
+        let onresize = {
+            let update = update.clone();
+            Callback::from(move |_| update.force_update())
+        };
 
-#[function_component]
-pub fn Item(props: &ItemProps) -> Html {
-    let node_ref = use_node_ref();
+        let ondrag = {
+            let drag = drag.clone();
+            let slide = slide.clone();
 
-    let onhover = use_callback(
-        |event: crate::drag::DragEvent, (node_ref, props)| {
-            let droppable = node_ref.cast::<HtmlElement>().unwrap();
+            Callback::from(move |_| {
+                drag.set(Some(i));
+                slide.borrow_mut().replace(Slide::new(i));
+            })
+        };
 
-            let position = position(event.position, props.direction);
-            let middle = middle(&droppable, props.direction);
+        let style = Style::new()
+            .with("position", "absolute")
+            .with("left", format!("{}px", x))
+            .with("top", format!("{}px", y));
 
-            let is_before = position < middle;
-            props.onhover.emit(is_before);
-        },
-        (node_ref.clone(), props.clone()),
-    );
-
-    let mut style = Style::new();
-
-    style.set("display", "block");
-
-    html! {
-        <Droppable
-            ondrag={ onhover }
-            node_ref={ node_ref.clone() }
-        >
+        let child = html! {
             <Draggable
-                ondrag={ props.ondrag.clone() }
-                ondrop={ props.ondrop.clone() }
-                node_ref={ props.node_ref.clone() }
+                class="garlic-list-item"
+                style={ style }
+                ondrag={ ondrag }
+                node_ref={ node_ref.clone() }
             >
-                <div class="garlic-sortable-list-item" style={ style }>
-                    { props.children.clone() }
-                </div>
+                <DetectResize node_ref={ node_ref } onresize={ onresize }/>
+                { child }
             </Draggable>
-        </Droppable>
+        };
+
+        items.push(child);
+    }
+
+    let onmove = {
+        let slide = slide.clone();
+        let update = update.clone();
+
+        use_callback(
+            move |event: crate::drag::DragEvent, (node_refs, order, drag, direction)| {
+                let mut index = order.borrow().len();
+
+                for (i, &o) in order.borrow().iter().enumerate() {
+                    if Some(i) == **drag {
+                        continue;
+                    }
+
+                    if let Some(element) = node_refs.borrow()[o].cast::<HtmlElement>() {
+                        let rect = element.get_bounding_client_rect();
+
+                        let position = match direction {
+                            Direction::Row => event.position.x,
+                            Direction::Column => event.position.y,
+                        };
+
+                        let middle = match direction {
+                            Direction::Row => rect.left() + rect.width() / 2.0,
+                            Direction::Column => rect.top() + rect.height() / 2.0,
+                        };
+
+                        if (position as f32) < middle as f32 {
+                            index = i;
+                            break;
+                        }
+                    }
+                }
+
+                let mut slide = slide.borrow_mut();
+                let slide = slide.as_mut().unwrap();
+
+                if slide.to != index {
+                    slide.slide(index);
+
+                    update.force_update();
+                }
+            },
+            (
+                node_refs.clone(),
+                order.clone(),
+                drag.clone(),
+                props.direction,
+            ),
+        )
+    };
+
+    let ondrop = {
+        let slide = slide.clone();
+
+        use_callback(
+            move |_, (order, drag)| {
+                let slide = slide.borrow_mut().take().unwrap();
+
+                let to = if drag.unwrap() < slide.to {
+                    slide.to - 1
+                } else {
+                    slide.to
+                };
+
+                let mut order = order.borrow_mut();
+                let index = order.remove(drag.unwrap());
+                order.insert(to, index);
+
+                drag.set(None);
+            },
+            (order.clone(), drag.clone()),
+        )
+    };
+
+    let style = Style::new()
+        .with("width", format!("{}px", width))
+        .with("height", format!("{}px", height));
+
+    html! {
+        <DragArea
+            style={ style }
+            onmove={ onmove }
+            ondrop={ ondrop }
+            direction={ props.contain.then_some(props.direction) }
+            contain={ props.contain }
+            node_ref={ node_ref }
+        >
+            { for items }
+        </DragArea>
     }
 }
