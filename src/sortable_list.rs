@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use web_sys::{DomRect, HtmlElement};
 use yew::prelude::*;
 
@@ -202,6 +204,54 @@ fn hovered_index(
     index
 }
 
+fn render_items(
+    node_refs: &[NodeRef],
+    positions: &[(f32, f32)],
+    order: &Order,
+    update: &UseForceUpdateHandle,
+    drag: &UseStateHandle<Option<usize>>,
+    slide: &Rc<RefCell<Option<Slide>>>,
+    props: &SortableListProps,
+) -> Vec<Html> {
+    let mut items = Vec::with_capacity(props.children.len());
+    for (o, child) in props.children.iter().enumerate() {
+        let node_ref = node_refs[o].clone();
+        let (x, y) = positions[o];
+        let i = order.iter().position(|&i| i == o).unwrap();
+
+        let update = update.clone();
+        let onresize = Callback::from(move |_| update.force_update());
+
+        let drag = drag.clone();
+        let slide = slide.clone();
+
+        let ondrag = Callback::from(move |_| {
+            drag.set(Some(i));
+            slide.borrow_mut().replace(Slide::new(i));
+        });
+
+        let style = Style::new()
+            .with("position", "absolute")
+            .with("left", format!("{}px", x))
+            .with("top", format!("{}px", y));
+
+        let child = html! {
+            <Draggable
+                class="garlic-list-item"
+                style={ style }
+                ondrag={ ondrag }
+                node_ref={ node_ref.clone() }
+            >
+                <DetectResize node_ref={ node_ref } onresize={ onresize }/>
+                { child }
+            </Draggable>
+        };
+
+        items.push(child);
+    }
+    items
+}
+
 #[function_component]
 pub fn SortableList(props: &SortableListProps) -> Html {
     let node_refs = use_mut_ref(Vec::<NodeRef>::new);
@@ -237,42 +287,15 @@ pub fn SortableList(props: &SortableListProps) -> Html {
         props,
     );
 
-    let mut items = Vec::with_capacity(props.children.len());
-    for (o, child) in props.children.iter().enumerate() {
-        let node_ref = node_refs.borrow()[o].clone();
-        let (x, y) = positions.borrow()[o];
-        let i = order.borrow().iter().position(|&i| i == o).unwrap();
-
-        let update = update.clone();
-        let onresize = Callback::from(move |_| update.force_update());
-
-        let drag = drag.clone();
-        let slide = slide.clone();
-
-        let ondrag = Callback::from(move |_| {
-            drag.set(Some(i));
-            slide.borrow_mut().replace(Slide::new(i));
-        });
-
-        let style = Style::new()
-            .with("position", "absolute")
-            .with("left", format!("{}px", x))
-            .with("top", format!("{}px", y));
-
-        let child = html! {
-            <Draggable
-                class="garlic-list-item"
-                style={ style }
-                ondrag={ ondrag }
-                node_ref={ node_ref.clone() }
-            >
-                <DetectResize node_ref={ node_ref } onresize={ onresize }/>
-                { child }
-            </Draggable>
-        };
-
-        items.push(child);
-    }
+    let items = render_items(
+        &node_refs.borrow(),
+        &positions.borrow(),
+        &order.borrow(),
+        &update,
+        &drag,
+        &slide,
+        props,
+    );
 
     let onmove = {
         let slide = slide.clone();
