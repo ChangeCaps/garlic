@@ -1,4 +1,5 @@
 use wasm_bindgen::{closure::Closure, JsCast};
+use yew::prelude::*;
 
 pub struct Function {
     pub closure: Closure<dyn FnMut()>,
@@ -56,4 +57,10 @@ impl AnimationFrame {
             .request_animation_frame(&self.function.into_js())
             .expect("garlic failed to request animation frame");
     }
+}
+
+#[hook]
+pub fn use_animation_frame() -> AnimationFrame {
+    let update = use_force_update();
+    AnimationFrame::new(move || update.force_update())
 }

@@ -1,7 +1,9 @@
-use web_sys::HtmlElement;
+use web_sys::{DomRect, HtmlElement};
 use yew::prelude::*;
 
-use crate::{function::AnimationFrame, DetectResize, Direction, DragArea, Draggable, Style};
+use crate::{
+    use_animation_frame, AnimationFrame, DetectResize, Direction, DragArea, Draggable, Order, Style,
+};
 
 #[derive(Properties, PartialEq)]
 pub struct SortableListProps {
@@ -18,111 +20,222 @@ pub struct SortableListProps {
     #[prop_or_default]
     pub contain: bool,
     #[prop_or_default]
-    pub onorder: Callback<Vec<usize>>,
+    pub onorder: Callback<Order>,
+}
+
+struct Slide {
+    to: usize,
+    from: usize,
+    time: f32,
+}
+
+impl Slide {
+    fn new(index: usize) -> Self {
+        Self {
+            to: index,
+            from: index,
+            time: 0.0,
+        }
+    }
+
+    fn slide(&mut self, to: usize) {
+        self.from = self.to;
+        self.to = to;
+        self.time = 1.0;
+    }
+
+    fn get_offset(&self, index: usize) -> f32 {
+        if index == self.to {
+            1.0 - self.time
+        } else if index == self.from {
+            self.time
+        } else {
+            0.0
+        }
+    }
+
+    fn update(&mut self, frame: AnimationFrame) {
+        if self.time > 0.001 {
+            self.time *= 0.8;
+
+            frame.request();
+        } else {
+            self.time = 0.0;
+        }
+    }
+}
+
+fn resize_child_state(
+    node_refs: &mut Vec<NodeRef>,
+    order: &mut Order,
+    positions: &mut Vec<(f32, f32)>,
+    len: usize,
+) -> bool {
+    if node_refs.len() == len {
+        return false;
+    }
+
+    node_refs.resize_with(len, Default::default);
+    positions.resize_with(len, Default::default);
+    order.resize(len);
+
+    true
+}
+
+fn get_drag_size(drag: Option<usize>, node_refs: &[NodeRef], direction: Direction) -> f32 {
+    if let Some(index) = drag {
+        let node_ref = node_refs[index].clone();
+        let element = node_ref.cast::<HtmlElement>().unwrap();
+
+        match direction {
+            Direction::Row => element.offset_width() as f32,
+            Direction::Column => element.offset_height() as f32,
+        }
+    } else {
+        0.0
+    }
+}
+
+fn get_offset(node_ref: &NodeRef) -> (f32, f32) {
+    if let Some(element) = node_ref.cast::<HtmlElement>() {
+        (element.offset_left() as f32, element.offset_top() as f32)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
+fn expand_size(width: &mut f32, height: &mut f32, rect: &DomRect, direction: Direction) {
+    match direction {
+        Direction::Row => {
+            *width += rect.width() as f32;
+            *height = height.max(rect.height() as f32);
+        }
+        Direction::Column => {
+            *width = width.max(rect.width() as f32);
+            *height += rect.height() as f32;
+        }
+    }
+}
+
+fn layout(
+    order: &Order,
+    node_refs: &[NodeRef],
+    positions: &mut [(f32, f32)],
+    direction: Direction,
+    drag: Option<usize>,
+    slide: &Option<Slide>,
+    props: &SortableListProps,
+) -> (f32, f32) {
+    let (mut x, mut y) = get_offset(&props.node_ref);
+    let drag_size = get_drag_size(drag, node_refs, props.direction);
+
+    let mut width = 0.0f32;
+    let mut height = 0.0f32;
+    for (i, &o) in order.iter().enumerate() {
+        let Some(element) = node_refs[o].cast::<HtmlElement>() else {
+            continue;
+        };
+
+        let rect = element.get_bounding_client_rect();
+
+        expand_size(&mut width, &mut height, &rect, direction);
+
+        if let Some(slide) = slide {
+            let offset = slide.get_offset(i) * drag_size;
+            match direction {
+                Direction::Row => x += offset,
+                Direction::Column => y += offset,
+            }
+        }
+
+        positions[o] = (x, y);
+
+        if Some(i) == drag {
+            continue;
+        }
+
+        match direction {
+            Direction::Row => x += rect.width() as f32,
+            Direction::Column => y += rect.height() as f32,
+        }
+    }
+
+    (width, height)
+}
+
+fn hovered_index(
+    event: &crate::drag::DragEvent,
+    node_refs: &[NodeRef],
+    order: &Order,
+    drag: Option<usize>,
+    direction: Direction,
+) -> usize {
+    let mut index = order.len();
+
+    for (i, &o) in order.iter().enumerate() {
+        if Some(i) == drag {
+            continue;
+        }
+
+        let Some(element) = node_refs[o].cast::<HtmlElement>() else {
+            continue;
+        };
+
+        let rect = element.get_bounding_client_rect();
+
+        let position = match direction {
+            Direction::Row => event.position.x,
+            Direction::Column => event.position.y,
+        };
+
+        let middle = match direction {
+            Direction::Row => rect.left() + rect.width() / 2.0,
+            Direction::Column => rect.top() + rect.height() / 2.0,
+        };
+
+        if (position as f32) < middle as f32 {
+            index = i;
+            break;
+        }
+    }
+
+    index
 }
 
 #[function_component]
 pub fn SortableList(props: &SortableListProps) -> Html {
     let node_refs = use_mut_ref(Vec::<NodeRef>::new);
-    let order = use_mut_ref(Vec::<usize>::new);
+    let order = use_mut_ref(Order::new);
     let positions = use_mut_ref(Vec::<(f32, f32)>::new);
     let slide = use_mut_ref(Option::<Slide>::default);
 
     let drag = use_state_eq(Option::<usize>::default);
 
     let update = use_force_update();
-    let frame = {
-        let update = update.clone();
-        AnimationFrame::new(move || update.force_update())
-    };
+    let frame = use_animation_frame();
 
-    if node_refs.borrow().len() != props.children.len() {
-        let mut node_refs = node_refs.borrow_mut();
-        for i in node_refs.len()..props.children.len() {
-            node_refs.push(NodeRef::default());
-            order.borrow_mut().push(i);
-            positions.borrow_mut().push((0.0, 0.0));
-        }
-
+    if resize_child_state(
+        &mut node_refs.borrow_mut(),
+        &mut order.borrow_mut(),
+        &mut positions.borrow_mut(),
+        props.children.len(),
+    ) {
         update.force_update();
     }
 
-    let drag_size = if let Some(index) = *drag {
-        let node_ref = node_refs.borrow()[index].clone();
-        let element = node_ref.cast::<HtmlElement>().unwrap();
-
-        match props.direction {
-            Direction::Row => element.offset_width() as f32,
-            Direction::Column => element.offset_height() as f32,
-        }
-    } else {
-        0.0
-    };
-
-    let mut x = 0.0;
-    let mut y = 0.0;
-
-    if let Some(element) = props.node_ref.cast::<HtmlElement>() {
-        x = element.offset_left() as f32;
-        y = element.offset_top() as f32;
-    }
-
     if let Some(slide) = slide.borrow_mut().as_mut() {
-        if slide.time > 0.001 {
-            slide.time *= 0.8;
-
-            frame.request();
-        } else {
-            slide.time = 0.0;
-        }
+        slide.update(frame);
     }
 
-    let mut width = 0.0f32;
-    let mut height = 0.0f32;
-    for (i, &o) in order.borrow().iter().enumerate() {
-        if let Some(element) = node_refs.borrow()[o].cast::<HtmlElement>() {
-            let rect = element.get_bounding_client_rect();
-
-            match props.direction {
-                Direction::Row => {
-                    width += rect.width() as f32;
-                    height = height.max(rect.height() as f32);
-                }
-                Direction::Column => {
-                    width = width.max(rect.width() as f32);
-                    height += rect.height() as f32;
-                }
-            }
-
-            if let Some(slide) = slide.borrow().as_ref() {
-                let mut offset = 0.0;
-
-                if slide.to == i {
-                    offset += (1.0 - slide.time) * drag_size;
-                }
-
-                if slide.from == i {
-                    offset += slide.time * drag_size;
-                }
-
-                match props.direction {
-                    Direction::Row => x += offset,
-                    Direction::Column => y += offset,
-                }
-            }
-
-            positions.borrow_mut()[o] = (x, y);
-
-            if Some(i) == *drag {
-                continue;
-            }
-
-            match props.direction {
-                Direction::Row => x += rect.width() as f32,
-                Direction::Column => y += rect.height() as f32,
-            }
-        }
-    }
+    let (width, height) = layout(
+        &order.borrow(),
+        &node_refs.borrow(),
+        &mut positions.borrow_mut(),
+        props.direction,
+        *drag,
+        &slide.borrow(),
+        props,
+    );
 
     let mut items = Vec::with_capacity(props.children.len());
     for (o, child) in props.children.iter().enumerate() {
@@ -130,20 +243,16 @@ pub fn SortableList(props: &SortableListProps) -> Html {
         let (x, y) = positions.borrow()[o];
         let i = order.borrow().iter().position(|&i| i == o).unwrap();
 
-        let onresize = {
-            let update = update.clone();
-            Callback::from(move |_| update.force_update())
-        };
+        let update = update.clone();
+        let onresize = Callback::from(move |_| update.force_update());
 
-        let ondrag = {
-            let drag = drag.clone();
-            let slide = slide.clone();
+        let drag = drag.clone();
+        let slide = slide.clone();
 
-            Callback::from(move |_| {
-                drag.set(Some(i));
-                slide.borrow_mut().replace(Slide::new(i));
-            })
-        };
+        let ondrag = Callback::from(move |_| {
+            drag.set(Some(i));
+            slide.borrow_mut().replace(Slide::new(i));
+        });
 
         let style = Style::new()
             .with("position", "absolute")
@@ -167,36 +276,16 @@ pub fn SortableList(props: &SortableListProps) -> Html {
 
     let onmove = {
         let slide = slide.clone();
-        let update = update.clone();
 
         use_callback(
             move |event: crate::drag::DragEvent, (node_refs, order, drag, direction)| {
-                let mut index = order.borrow().len();
-
-                for (i, &o) in order.borrow().iter().enumerate() {
-                    if Some(i) == **drag {
-                        continue;
-                    }
-
-                    if let Some(element) = node_refs.borrow()[o].cast::<HtmlElement>() {
-                        let rect = element.get_bounding_client_rect();
-
-                        let position = match direction {
-                            Direction::Row => event.position.x,
-                            Direction::Column => event.position.y,
-                        };
-
-                        let middle = match direction {
-                            Direction::Row => rect.left() + rect.width() / 2.0,
-                            Direction::Column => rect.top() + rect.height() / 2.0,
-                        };
-
-                        if (position as f32) < middle as f32 {
-                            index = i;
-                            break;
-                        }
-                    }
-                }
+                let index = hovered_index(
+                    &event,
+                    &node_refs.borrow(),
+                    &order.borrow(),
+                    **drag,
+                    *direction,
+                );
 
                 let mut slide = slide.borrow_mut();
                 let slide = slide.as_mut().unwrap();
@@ -216,30 +305,19 @@ pub fn SortableList(props: &SortableListProps) -> Html {
         )
     };
 
-    let ondrop = {
-        let slide = slide.clone();
+    let ondrop = use_callback(
+        move |_, (order, drag, onorder)| {
+            let slide = slide.borrow_mut().take().unwrap();
 
-        use_callback(
-            move |_, (order, drag, onorder)| {
-                let slide = slide.borrow_mut().take().unwrap();
+            let mut order = order.borrow_mut();
+            order.swap_move(drag.unwrap(), slide.to);
 
-                let to = if drag.unwrap() < slide.to {
-                    slide.to - 1
-                } else {
-                    slide.to
-                };
+            onorder.emit(order.clone());
 
-                let mut order = order.borrow_mut();
-                let index = order.remove(drag.unwrap());
-                order.insert(to, index);
-
-                onorder.emit(order.clone());
-
-                drag.set(None);
-            },
-            (order.clone(), drag.clone(), props.onorder.clone()),
-        )
-    };
+            drag.set(None);
+        },
+        (order.clone(), drag.clone(), props.onorder.clone()),
+    );
 
     let mut style = Style::new()
         .with("width", format!("{}px", width))
@@ -259,27 +337,5 @@ pub fn SortableList(props: &SortableListProps) -> Html {
         >
             { for items }
         </DragArea>
-    }
-}
-
-struct Slide {
-    to: usize,
-    from: usize,
-    time: f32,
-}
-
-impl Slide {
-    fn new(index: usize) -> Self {
-        Self {
-            to: index,
-            from: index,
-            time: 0.0,
-        }
-    }
-
-    fn slide(&mut self, to: usize) {
-        self.from = self.to;
-        self.to = to;
-        self.time = 1.0;
     }
 }
