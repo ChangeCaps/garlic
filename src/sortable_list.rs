@@ -17,6 +17,8 @@ pub struct SortableListProps {
     pub direction: Direction,
     #[prop_or_default]
     pub contain: bool,
+    #[prop_or_default]
+    pub onorder: Callback<Vec<usize>>,
 }
 
 #[function_component]
@@ -218,7 +220,7 @@ pub fn SortableList(props: &SortableListProps) -> Html {
         let slide = slide.clone();
 
         use_callback(
-            move |_, (order, drag)| {
+            move |_, (order, drag, onorder)| {
                 let slide = slide.borrow_mut().take().unwrap();
 
                 let to = if drag.unwrap() < slide.to {
@@ -231,9 +233,11 @@ pub fn SortableList(props: &SortableListProps) -> Html {
                 let index = order.remove(drag.unwrap());
                 order.insert(to, index);
 
+                onorder.emit(order.clone());
+
                 drag.set(None);
             },
-            (order.clone(), drag.clone()),
+            (order.clone(), drag.clone(), props.onorder.clone()),
         )
     };
 
