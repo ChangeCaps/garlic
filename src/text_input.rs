@@ -10,6 +10,7 @@ pub struct TextInputProps {
     #[prop_or_default]
     pub node_ref: NodeRef,
     pub value: Option<String>,
+    pub title: Option<String>,
     #[prop_or_default]
     pub oninput: Callback<String>,
 }
@@ -29,6 +30,8 @@ pub fn TextInput(props: &TextInputProps) -> Html {
             class={ classes!("garlic-text-input", props.class.clone()) }
             style={ props.style.clone() }
             value={ props.value.clone() }
+            title={ props.title.clone() }
+            type="text"
             oninput={ oninput }
             ref={ props.node_ref.clone() }
         />
