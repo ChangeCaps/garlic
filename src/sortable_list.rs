@@ -233,6 +233,9 @@ fn render_items(
         let style = Style::new()
             .with("position", "absolute")
             .with("user-select", "none")
+            .with("-webkit-user-select", "none")
+            .with("-moz-user-select", "none")
+            .with("-ms-user-select", "none")
             .with("left", format!("{}px", x))
             .with("top", format!("{}px", y));
 
