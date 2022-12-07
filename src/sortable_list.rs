@@ -119,7 +119,7 @@ fn expand_size(width: &mut f32, height: &mut f32, rect: &DomRect, direction: Dir
     }
 }
 
-fn layout(
+fn layout_items(
     order: &Order,
     node_refs: &[NodeRef],
     positions: &mut [(f32, f32)],
@@ -281,7 +281,7 @@ pub fn SortableList(props: &SortableListProps) -> Html {
         slide.update(frame);
     }
 
-    let (width, height) = layout(
+    let (width, height) = layout_items(
         &order.borrow(),
         &node_refs.borrow(),
         &mut positions.borrow_mut(),

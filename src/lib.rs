@@ -7,6 +7,7 @@ mod order;
 mod sortable_list;
 mod spacer;
 mod style;
+mod text_input;
 
 pub use detect_resize::*;
 pub use direction::*;
@@ -17,3 +18,4 @@ pub use order::*;
 pub use sortable_list::*;
 pub use spacer::*;
 pub use style::*;
+pub use text_input::*;
