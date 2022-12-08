@@ -13,6 +13,8 @@ pub struct TextInputProps {
     pub title: Option<String>,
     pub placeholder: Option<String>,
     #[prop_or_default]
+    pub autofocus: bool,
+    #[prop_or_default]
     pub oninput: Callback<String>,
     #[prop_or_default]
     pub onkeypress: Callback<KeyboardEvent>,
@@ -44,6 +46,7 @@ pub fn TextInput(props: &TextInputProps) -> Html {
             title={ props.title.clone() }
             placeholder={ props.placeholder.clone() }
             type="text"
+            autofocus={ props.autofocus }
             oninput={ oninput }
             onkeypress={ props.onkeypress.clone() }
             onkeydown={ props.onkeydown.clone() }
