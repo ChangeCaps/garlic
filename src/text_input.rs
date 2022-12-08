@@ -14,6 +14,16 @@ pub struct TextInputProps {
     pub placeholder: Option<String>,
     #[prop_or_default]
     pub oninput: Callback<String>,
+    #[prop_or_default]
+    pub onkeypress: Callback<KeyboardEvent>,
+    #[prop_or_default]
+    pub onkeydown: Callback<KeyboardEvent>,
+    #[prop_or_default]
+    pub onkeyup: Callback<KeyboardEvent>,
+    #[prop_or_default]
+    pub onfocus: Callback<FocusEvent>,
+    #[prop_or_default]
+    pub onblur: Callback<FocusEvent>,
 }
 
 #[function_component]
@@ -35,6 +45,11 @@ pub fn TextInput(props: &TextInputProps) -> Html {
             placeholder={ props.placeholder.clone() }
             type="text"
             oninput={ oninput }
+            onkeypress={ props.onkeypress.clone() }
+            onkeydown={ props.onkeydown.clone() }
+            onkeyup={ props.onkeyup.clone() }
+            onfocus={ props.onfocus.clone() }
+            onblur={ props.onblur.clone() }
             ref={ props.node_ref.clone() }
         />
     }
