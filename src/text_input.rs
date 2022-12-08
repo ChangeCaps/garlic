@@ -38,6 +38,12 @@ pub fn TextInput(props: &TextInputProps) -> Html {
         (props.node_ref.clone(), props.oninput.clone()),
     );
 
+    if props.autofocus {
+        if let Some(element) = props.node_ref.cast::<HtmlInputElement>() {
+            element.focus().unwrap();
+        }
+    }
+
     html! {
         <input
             class={ classes!("garlic-text-input", props.class.clone()) }
